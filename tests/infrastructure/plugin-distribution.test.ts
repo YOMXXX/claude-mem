@@ -133,15 +133,18 @@ describe('Plugin Distribution - Startup Root Resolution', () => {
     for (const relativePath of ['plugin/.mcp.json']) {
       const command = mcpStartupCommandFrom(relativePath);
 
-      expect(command).toContain('${CLAUDE_CONFIG_DIR:-$HOME/.claude}');
-      expect(command).toContain('_E="${CLAUDE_PLUGIN_ROOT:-${PLUGIN_ROOT:-}}"');
-      expect(command).toContain('while IFS= read -r _R');
-      expect(command).toContain('$_C/plugins/marketplaces/thedotmack/plugin');
-      expect(command).toContain('$_C/plugins/cache/thedotmack/claude-mem');
-      expect(command).toContain('[ -f "$_Q/scripts/mcp-server.cjs" ]');
-      expect(command).not.toContain('"/scripts/mcp-server.cjs"');
-      expect(command.indexOf('$_C/plugins/cache/thedotmack/claude-mem')).toBeLessThan(
-        command.indexOf('$_C/plugins/marketplaces/thedotmack/plugin')
+      // MCP launches under a portable Node inline script (#2461), not `sh -c`,
+      // so the fallback chain is expressed in JS rather than POSIX shell.
+      expect(command).toContain("process.env.CLAUDE_CONFIG_DIR||p.join(h,'.claude')");
+      expect(command).toContain("process.env.CLAUDE_PLUGIN_ROOT||process.env.PLUGIN_ROOT||''");
+      expect(command).toContain('for(const k of K)');
+      expect(command).toContain('plugins/marketplaces/thedotmack/plugin');
+      expect(command).toContain('plugins/cache/thedotmack/claude-mem');
+      expect(command).toContain("p.join(r,'scripts','mcp-server.cjs')");
+      expect(command).not.toContain('sh -c');
+      expect(command).not.toContain('ls -dt');
+      expect(command.indexOf('plugins/cache/thedotmack/claude-mem')).toBeLessThan(
+        command.indexOf('plugins/marketplaces/thedotmack/plugin')
       );
     }
   });
@@ -307,15 +310,18 @@ describe('Spawn-Contract Templating - Rule A generator parity', () => {
   it('never leaks a raw ${CLAUDE_PLUGIN_ROOT} into the resolved trailing command', () => {
     // The placeholder may appear only inside the _E="${CLAUDE_PLUGIN_ROOT:-...}"
     // expansion, never as a bare `${CLAUDE_PLUGIN_ROOT}` token that would reach
-    // the binary unsubstituted.
-    const all = [
-      ...Object.values(RULE_A_EXPECTATIONS).flatMap((c) => Object.values(c)),
-      MCP_EXPECTED,
-    ];
-    for (const command of all) {
+    // the binary unsubstituted. This holds for every host, shell or Node.
+    const shellCommands = Object.values(RULE_A_EXPECTATIONS).flatMap((c) => Object.values(c));
+    for (const command of [...shellCommands, MCP_EXPECTED]) {
       expect(command).not.toMatch(/\$\{CLAUDE_PLUGIN_ROOT\}(?!:-)/);
+    }
+    // POSIX-shell hosts resolve the root through the _E expansion...
+    for (const command of shellCommands) {
       expect(command).toContain('_E="${CLAUDE_PLUGIN_ROOT:-${PLUGIN_ROOT:-}}"');
     }
+    // ...while the MCP Node launcher resolves it via process.env with the same
+    // CLAUDE_PLUGIN_ROOT → PLUGIN_ROOT → '' precedence.
+    expect(MCP_EXPECTED).toContain("process.env.CLAUDE_PLUGIN_ROOT||process.env.PLUGIN_ROOT||''");
   });
 });
 
